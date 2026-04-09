@@ -1,3 +1,1 @@
-bash
-
-pip freeze > requirements.txt
+# Dépendances runtime (vide pour l’instant)

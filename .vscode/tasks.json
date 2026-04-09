@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run app",
+      "type": "shell",
+      "command": "PYTHONPATH=src python -m ifer_tool.main",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run tests",
+      "type": "shell",
+      "command": "PYTHONPATH=src pytest -q",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}
