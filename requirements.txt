@@ -1,1 +1,2 @@
-# Dépendances runtime (vide pour l’instant)
+# Dépendances runtime
+duckdb>=1.2,<2

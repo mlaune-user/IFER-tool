@@ -14,6 +14,139 @@
       "command": "PYTHONPATH=src pytest -q",
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "Run insee build",
+      "type": "shell",
+      "command": "PYTHONPATH=src python -m ifer_tool.main insee-build",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Inspect insee data",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom pathlib import Path\nimport duckdb\nfrom ifer_tool.insee_module import _prepare_tabular_file\n\nroot = Path('/workspaces/IFER-tool/insee')\ncog = root / 'v_commune_2025.csv'\nuu_zip = root / 'fonds_uu2020_2025.zip'\n\nprepared_uu = _prepare_tabular_file(uu_zip)\nprint('prepared_uu=', prepared_uu)\n\ncon = duckdb.connect()\ncon.execute('INSTALL spatial')\ncon.execute('LOAD spatial')\n\ncon.execute(\"CREATE TEMP TABLE cog AS SELECT * FROM read_csv_auto(?, all_varchar=true, header=true, normalize_names=true)\", [str(cog)])\ncon.execute(\"CREATE TEMP TABLE uu AS SELECT * FROM st_read(?)\", [str(prepared_uu)])\n\nprint('cog columns=', [r[1] for r in con.execute(\"PRAGMA table_info('cog')\").fetchall()])\nprint('uu columns=', [r[1] for r in con.execute(\"PRAGMA table_info('uu')\").fetchall()])\n\nprint('cog rows=', con.execute('SELECT COUNT(*) FROM cog').fetchone()[0])\nprint('uu rows=', con.execute('SELECT COUNT(*) FROM uu').fetchone()[0])\n\nprint('cog code rows=', con.execute(\"SELECT COUNT(*) FROM cog WHERE regexp_matches(com, '^[0-9AB][0-9]{4}$')\").fetchone()[0])\nprint('uu code rows=', con.execute(\"SELECT COUNT(*) FROM uu WHERE regexp_matches(codgeo, '^[0-9AB][0-9]{4}$')\").fetchone()[0])\nprint('join rows=', con.execute(\"SELECT COUNT(*) FROM cog c LEFT JOIN uu u ON u.codgeo = c.com WHERE regexp_matches(c.com, '^[0-9AB][0-9]{4}$')\").fetchone()[0])\nprint('join matched rows=', con.execute(\"SELECT COUNT(*) FROM cog c JOIN uu u ON u.codgeo = c.com WHERE regexp_matches(c.com, '^[0-9AB][0-9]{4}$')\").fetchone()[0])\nprint('sample=', con.execute(\"SELECT c.com, u.uu2020, u.type_com FROM cog c LEFT JOIN uu u ON u.codgeo = c.com WHERE regexp_matches(c.com, '^[0-9AB][0-9]{4}$') LIMIT 5\").fetchall())\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug insee SQL pipeline",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nimport duckdb\nfrom pathlib import Path\nfrom ifer_tool.insee_module import _prepare_tabular_file\n\nroot = Path('/workspaces/IFER-tool/insee')\ncog_path = _prepare_tabular_file(root / 'v_commune_2025.csv')\nuu_path = _prepare_tabular_file(root / 'fonds_uu2020_2025.zip')\nhist_path = _prepare_tabular_file(root / 'historique_communes_fallback.csv')\n\ncon = duckdb.connect()\ncon.execute('INSTALL spatial')\ncon.execute('LOAD spatial')\n\ncon.execute(f\"CREATE OR REPLACE TEMP TABLE cog_raw AS SELECT * FROM read_csv_auto('{str(cog_path)}', all_varchar=true, sample_size=-1, normalize_names=true, header=true, strict_mode=false, ignore_errors=true, null_padding=true, max_line_size=10000000)\")\nif uu_path.suffix.lower() in {'.dbf', '.shp', '.gpkg', '.geojson', '.xls', '.xlsx'}:\n    con.execute(f\"CREATE OR REPLACE TEMP TABLE uu_raw AS SELECT * FROM st_read('{str(uu_path)}')\")\nelse:\n    con.execute(f\"CREATE OR REPLACE TEMP TABLE uu_raw AS SELECT * FROM read_csv_auto('{str(uu_path)}', all_varchar=true, sample_size=-1, normalize_names=true, header=true, strict_mode=false, ignore_errors=true, null_padding=true, max_line_size=10000000)\")\ncon.execute(f\"CREATE OR REPLACE TEMP TABLE history_raw AS SELECT * FROM read_csv_auto('{str(hist_path)}', all_varchar=true, sample_size=-1, normalize_names=true, header=true, strict_mode=false, ignore_errors=true, null_padding=true, max_line_size=10000000)\")\n\ncon.execute(\"CREATE OR REPLACE TEMP TABLE cog_current AS SELECT DISTINCT com AS code FROM cog_raw WHERE regexp_matches(com, '^[0-9AB][0-9]{4}$')\")\ncon.execute(\"CREATE OR REPLACE TEMP TABLE uu_base AS SELECT DISTINCT codgeo AS code, uu2020 AS tuu, type_com AS tduu FROM uu_raw WHERE regexp_matches(codgeo, '^[0-9AB][0-9]{4}$')\")\ncon.execute(\"CREATE OR REPLACE TEMP TABLE history_edges AS SELECT DISTINCT old_code AS old_code, new_code AS new_code FROM history_raw WHERE regexp_matches(old_code, '^[0-9AB][0-9]{4}$') AND regexp_matches(new_code, '^[0-9AB][0-9]{4}$') AND old_code <> new_code\")\ncon.execute(\"CREATE OR REPLACE TEMP TABLE history_resolved AS WITH RECURSIVE walk(origin_code,current_code,depth) AS (SELECT old_code,new_code,1 FROM history_edges UNION ALL SELECT w.origin_code,e.new_code,w.depth+1 FROM walk w JOIN history_edges e ON e.old_code=w.current_code WHERE w.depth < 20), ranked AS (SELECT origin_code,current_code,depth,row_number() OVER (PARTITION BY origin_code ORDER BY depth DESC) AS rn FROM walk) SELECT origin_code,current_code FROM ranked WHERE rn=1\")\n\nprint('cog_current=', con.execute('SELECT COUNT(*) FROM cog_current').fetchone()[0])\nprint('uu_base=', con.execute('SELECT COUNT(*) FROM uu_base').fetchone()[0])\nprint('history_edges=', con.execute('SELECT COUNT(*) FROM history_edges').fetchone()[0])\nprint('history_resolved=', con.execute('SELECT COUNT(*) FROM history_resolved').fetchone()[0])\n\ncon.execute(\"CREATE OR REPLACE TEMP TABLE all_codes AS SELECT code AS cog_initial, code AS cog_reference FROM cog_current UNION SELECT origin_code AS cog_initial, current_code AS cog_reference FROM history_resolved\")\nprint('all_codes=', con.execute('SELECT COUNT(*) FROM all_codes').fetchone()[0])\nprint('metro_codes=', con.execute(\"SELECT COUNT(*) FROM all_codes WHERE (substr(cog_initial,1,2) BETWEEN '01' AND '95') OR substr(cog_initial,1,2) IN ('2A','2B')\").fetchone()[0])\nprint('joined_metro=', con.execute(\"SELECT COUNT(*) FROM all_codes a LEFT JOIN uu_base u ON u.code=a.cog_reference WHERE (substr(a.cog_initial,1,2) BETWEEN '01' AND '95') OR substr(a.cog_initial,1,2) IN ('2A','2B')\").fetchone()[0])\nprint('matched_metro=', con.execute(\"SELECT COUNT(*) FROM all_codes a JOIN uu_base u ON u.code=a.cog_reference WHERE (substr(a.cog_initial,1,2) BETWEEN '01' AND '95') OR substr(a.cog_initial,1,2) IN ('2A','2B')\").fetchone()[0])\nprint('sample=', con.execute(\"SELECT a.cog_initial, a.cog_reference, u.tuu, u.tduu FROM all_codes a LEFT JOIN uu_base u ON u.code=a.cog_reference LIMIT 5\").fetchall())\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug insee final table",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom pathlib import Path\nimport duckdb\nfrom ifer_tool.insee_module import build_insee_duckdb_table\n\nresult = build_insee_duckdb_table(\n    insee_dir=Path('/workspaces/IFER-tool/insee'),\n    database_path=Path('/workspaces/IFER-tool/insee/insee.duckdb'),\n    target_year=2025,\n    metro_only=True,\n    expected_rows=None,\n)\nprint('result row_count=', result.row_count)\nprint('table=', result.table_name)\n\ncon = duckdb.connect('/workspaces/IFER-tool/insee/insee.duckdb')\ncon.execute(\"SET schema = 'insee'\")\nprint('count from table=', con.execute('SELECT COUNT(*) FROM cog_tuu_tduu_2025').fetchone()[0])\nprint('sample=', con.execute('SELECT * FROM cog_tuu_tduu_2025 LIMIT 5').fetchall())\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug insee internal build",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom pathlib import Path\nimport duckdb\nfrom ifer_tool.insee_module import _build_cog_tuu_tduu_table, _prepare_tabular_file\n\ncog = _prepare_tabular_file(Path('/workspaces/IFER-tool/insee/v_commune_2025.csv'))\nuu = _prepare_tabular_file(Path('/workspaces/IFER-tool/insee/fonds_uu2020_2025.zip'))\nhist = _prepare_tabular_file(Path('/workspaces/IFER-tool/insee/historique_communes_fallback.csv'))\n\ncon = duckdb.connect('/workspaces/IFER-tool/insee/insee.duckdb')\ntable, count = _build_cog_tuu_tduu_table(con, cog, uu, hist, 2025, True)\nprint('table=', table)\nprint('count=', count)\n\nprint('cog_raw columns=', [r[1] for r in con.execute(\"PRAGMA table_info('cog_raw')\").fetchall()])\nprint('uu_raw columns=', [r[1] for r in con.execute(\"PRAGMA table_info('uu_raw')\").fetchall()])\nprint('history_raw columns=', [r[1] for r in con.execute(\"PRAGMA table_info('history_raw')\").fetchall()])\nprint('cog_raw sample=', con.execute('SELECT * FROM cog_raw LIMIT 1').fetchall())\nprint('uu_raw sample=', con.execute('SELECT * FROM uu_raw LIMIT 1').fetchall())\n\nprint('cog_current=', con.execute('SELECT COUNT(*) FROM cog_current').fetchone()[0])\nprint('uu_base=', con.execute('SELECT COUNT(*) FROM uu_base').fetchone()[0])\nprint('history_edges=', con.execute('SELECT COUNT(*) FROM history_edges').fetchone()[0])\nprint('history_resolved=', con.execute('SELECT COUNT(*) FROM history_resolved').fetchone()[0])\n\nprint('table_count_direct=', con.execute('SELECT COUNT(*) FROM cog_tuu_tduu_2025').fetchone()[0])\nprint('sample=', con.execute('SELECT * FROM cog_tuu_tduu_2025 LIMIT 5').fetchall())\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Check insee table count",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nimport duckdb\ncon = duckdb.connect('/workspaces/IFER-tool/insee/insee.duckdb')\ncon.execute(\"SET schema = 'insee'\")\nprint(con.execute('SELECT COUNT(*) FROM cog_tuu_tduu_2025').fetchone()[0])\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "List COG info links",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _extract_stat_file_links_from_info_page, COG_INFO_PAGE_URL\n\nlinks = _extract_stat_file_links_from_info_page(COG_INFO_PAGE_URL)\nprint('count=', len(links))\nfor link in links:\n    print(link)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Probe INSEE fichier endpoints",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _probe_fichier_endpoints\n\nfor ids in [(\"2521852\",), (\"2560452\",), (\"8377162\",), (\"2531265\",), (\"2531266\",), (\"4802589\",)]:\n    links = _probe_fichier_endpoints(ids)\n    print('ids=', ids, 'count=', len(links))\n    for link in links:\n        print(' ', link)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Probe INSEE history URL candidates",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _url_exists\n\nbase = 'https://www.insee.fr/fr/statistiques/fichier/{pid}/{name}'\nproduct_ids = ['8377162', '2521852', '2560452']\nyears = [2025, 2024]\nname_patterns = [\n    'v_mvt_commune_{year}.csv',\n    'v_mouv_commune_{year}.csv',\n    'v_historique_communes_{year}.csv',\n    'historique_communes_{year}.csv',\n    'mvtcommune_{year}.csv',\n    'mvt_commune_{year}.csv',\n    'v_commune_historique_{year}.csv',\n    'v_mvt_commune.csv',\n    'mouvements_communes_depuis_1943.csv',\n    'historique_communes_depuis_1943.csv',\n]\n\nfor pid in product_ids:\n    for year in years:\n        for pattern in name_patterns:\n            name = pattern.format(year=year) if '{year}' in pattern else pattern\n            url = base.format(pid=pid, name=name)\n            if _url_exists(url):\n                print('FOUND', url)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Probe INSEE yearly movement files",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _url_exists\n\nexisting = []\nfor year in range(1943, 2026):\n    url = f'https://www.insee.fr/fr/statistiques/fichier/8377162/v_mvt_commune_{year}.csv'\n    if _url_exists(url):\n        existing.append(url)\n\nprint('found=', len(existing))\nfor url in existing[:10]:\n    print(url)\nif len(existing) > 10:\n    print('...')\nfor url in existing[-10:]:\n    print(url)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Inspect COG info HTML",
+      "type": "shell",
+      "command": "python - <<'PY'\nfrom urllib.request import Request, urlopen\n\nurl = 'https://www.insee.fr/fr/information/2560452'\nreq = Request(url, headers={'User-Agent': 'Mozilla/5.0'})\nwith urlopen(req) as r:\n    text = r.read().decode('utf-8', errors='ignore')\n\nprint('len=', len(text))\nfor needle in ['fichier', 'statistiques/fichier', '__NEXT_DATA__', '__NUXT__', 'api', 'json']:\n    print(needle, needle in text)\n\nidx = text.lower().find('fichier')\nif idx >= 0:\n    print(text[max(0, idx-300):idx+500])\nelse:\n    print(text[:1000])\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Extract COG page endpoints",
+      "type": "shell",
+      "command": "python - <<'PY'\nimport re\nfrom urllib.request import Request, urlopen\n\nurl = 'https://www.insee.fr/fr/information/2560452'\nreq = Request(url, headers={'User-Agent': 'Mozilla/5.0'})\nwith urlopen(req) as r:\n    text = r.read().decode('utf-8', errors='ignore')\n\npatterns = [\n    r'\"(/[^\" ]*api[^\" ]*)\"',\n    r'\"(/[^\" ]*information[^\" ]*)\"',\n    r'\"(/static/js/[^\" ]+)\"',\n    r'fetch\\(([^\\)]+)\\)',\n    r'url\\s*:\\s*\"([^\"]+)\"',\n]\n\nseen = set()\nfor p in patterns:\n    for m in re.findall(p, text):\n        v = m.strip().strip('\\\"').strip(\"'\")\n        if not v or len(v) > 300:\n            continue\n        if v in seen:\n            continue\n        seen.add(v)\n        print(v)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "List COG related info links",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _extract_stat_file_links_from_info_page\n\nfor page_id in ['8377162', '8377252', '2560452', '4802589']:\n    url = f'https://www.insee.fr/fr/information/{page_id}'\n    links = _extract_stat_file_links_from_info_page(url)\n    print('page', page_id, 'count', len(links))\n    for link in links[:20]:\n        print(' ', link)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "List all links page 8377162",
+      "type": "shell",
+      "command": "PYTHONPATH=src python - <<'PY'\nfrom ifer_tool.insee_module import _extract_stat_file_links_from_info_page\n\nurl = 'https://www.insee.fr/fr/information/8377162'\nlinks = _extract_stat_file_links_from_info_page(url)\nprint('count', len(links))\nfor link in links:\n    print(link)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Preview v_commune_depuis_1943",
+      "type": "shell",
+      "command": "python - <<'PY'\nfrom pathlib import Path\nfrom urllib.request import Request, urlopen\n\nurl = 'https://www.insee.fr/fr/statistiques/fichier/8377162/v_commune_depuis_1943.csv'\nout = Path('/workspaces/IFER-tool/insee/v_commune_depuis_1943.csv')\nreq = Request(url, headers={'User-Agent': 'Mozilla/5.0'})\nwith urlopen(req) as r:\n    out.write_bytes(r.read())\n\nprint('saved', out)\nfor i, line in enumerate(out.read_text(encoding='utf-8', errors='ignore').splitlines()[:25], start=1):\n    print(f'{i}: {line}')\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Count historical metro COG",
+      "type": "shell",
+      "command": "python - <<'PY'\nimport duckdb\n\ncon = duckdb.connect()\npath = '/workspaces/IFER-tool/insee/v_commune_depuis_1943.csv'\ncon.execute(\"CREATE TEMP TABLE hist AS SELECT * FROM read_csv_auto(?, all_varchar=true, header=true, normalize_names=true)\", [path])\ncount_all = con.execute(\"SELECT COUNT(DISTINCT com) FROM hist WHERE regexp_full_match(com, '^[0-9]{5}$|^2[AB][0-9]{3}$')\").fetchone()[0]\ncount_metro = con.execute(\"SELECT COUNT(DISTINCT com) FROM hist WHERE regexp_full_match(com, '^[0-9]{5}$|^2[AB][0-9]{3}$') AND ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\").fetchone()[0]\ncount_metro_no_regex = con.execute(\"SELECT COUNT(DISTINCT com) FROM hist WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\").fetchone()[0]\nprint('distinct_all=', count_all)\nprint('distinct_metro=', count_metro)\nprint('distinct_metro_no_regex=', count_metro_no_regex)\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Count COMER metro",
+      "type": "shell",
+      "command": "python - <<'PY'\nfrom pathlib import Path\nfrom urllib.request import Request, urlopen\nimport duckdb\n\nurl = 'https://www.insee.fr/fr/statistiques/fichier/8377162/v_comer_2025.csv'\nout = Path('/workspaces/IFER-tool/insee/v_comer_2025.csv')\nreq = Request(url, headers={'User-Agent': 'Mozilla/5.0'})\nwith urlopen(req) as r:\n    out.write_bytes(r.read())\n\ncon = duckdb.connect()\ncon.execute(\"CREATE TEMP TABLE t AS SELECT * FROM read_csv_auto(?, all_varchar=true, header=true, normalize_names=true)\", [str(out)])\nprint('columns=', [r[1] for r in con.execute(\"PRAGMA table_info('t')\").fetchall()])\nprint('all=', con.execute('SELECT COUNT(DISTINCT comer) FROM t').fetchone()[0])\nprint('metro=', con.execute(\"SELECT COUNT(DISTINCT comer) FROM t WHERE (substr(comer,1,2) BETWEEN '01' AND '95') OR substr(comer,1,2) IN ('2A','2B')\").fetchone()[0])\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compare history and current code types",
+      "type": "shell",
+      "command": "python - <<'PY'\nimport duckdb\n\ncon = duckdb.connect()\ncon.execute(\"CREATE TEMP TABLE hist AS SELECT * FROM read_csv_auto('/workspaces/IFER-tool/insee/v_commune_depuis_1943.csv', all_varchar=true, header=true, normalize_names=true)\")\ncon.execute(\"CREATE TEMP TABLE cur AS SELECT * FROM read_csv_auto('/workspaces/IFER-tool/insee/v_commune_2025.csv', all_varchar=true, header=true, normalize_names=true)\")\n\nfor label, query in [\n    ('hist metro distinct', \"SELECT COUNT(DISTINCT com) FROM hist WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('hist ARM distinct', \"SELECT COUNT(DISTINCT com) FROM hist WHERE typecom='ARM' AND ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('hist COMD distinct', \"SELECT COUNT(DISTINCT com) FROM hist WHERE typecom='COMD' AND ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('cur metro distinct', \"SELECT COUNT(DISTINCT com) FROM cur WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('cur ARM distinct', \"SELECT COUNT(DISTINCT com) FROM cur WHERE typecom='ARM' AND ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('cur COMD distinct', \"SELECT COUNT(DISTINCT com) FROM cur WHERE typecom='COMD' AND ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\"),\n    ('current not in history', \"SELECT COUNT(DISTINCT cur.com) FROM cur LEFT JOIN hist ON hist.com=cur.com WHERE hist.com IS NULL AND ((substr(cur.com,1,2) BETWEEN '01' AND '95') OR substr(cur.com,1,2) IN ('2A','2B'))\"),\n    ('current COMD not in history', \"SELECT COUNT(DISTINCT cur.com) FROM cur LEFT JOIN hist ON hist.com=cur.com WHERE hist.com IS NULL AND cur.typecom='COMD' AND ((substr(cur.com,1,2) BETWEEN '01' AND '95') OR substr(cur.com,1,2) IN ('2A','2B'))\"),\n    ('current ARM not in history', \"SELECT COUNT(DISTINCT cur.com) FROM cur LEFT JOIN hist ON hist.com=cur.com WHERE hist.com IS NULL AND cur.typecom='ARM' AND ((substr(cur.com,1,2) BETWEEN '01' AND '95') OR substr(cur.com,1,2) IN ('2A','2B'))\"),\n]:\n    print(label, '=', con.execute(query).fetchone()[0])\n\nprint('sample current not in history=', con.execute(\"SELECT DISTINCT cur.typecom, cur.com, cur.comparent FROM cur LEFT JOIN hist ON hist.com=cur.com WHERE hist.com IS NULL AND ((substr(cur.com,1,2) BETWEEN '01' AND '95') OR substr(cur.com,1,2) IN ('2A','2B')) ORDER BY cur.typecom, cur.com LIMIT 60\").fetchall())\nPY",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Count historical periods",
+      "type": "shell",
+      "command": "python - <<'PY'\nimport duckdb\n\ncon = duckdb.connect()\ncon.execute(\"CREATE TEMP TABLE hist AS SELECT * FROM read_csv_auto('/workspaces/IFER-tool/insee/v_commune_depuis_1943.csv', all_varchar=true, header=true, normalize_names=true)\")\nprint('distinct com metro=', con.execute(\"SELECT COUNT(DISTINCT com) FROM hist WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B'))\").fetchone()[0])\nprint('distinct com+date_debut metro=', con.execute(\"SELECT COUNT(*) FROM (SELECT DISTINCT com, date_debut FROM hist WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B')))\").fetchone()[0])\nprint('distinct com+date_debut+date_fin metro=', con.execute(\"SELECT COUNT(*) FROM (SELECT DISTINCT com, date_debut, date_fin FROM hist WHERE ((substr(com,1,2) BETWEEN '01' AND '95') OR substr(com,1,2) IN ('2A','2B')))\").fetchone()[0])\nPY",
+      "group": "build",
+      "problemMatcher": []
     }
   ]
 }
