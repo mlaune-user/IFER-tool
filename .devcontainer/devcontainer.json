@@ -1,0 +1,14 @@
+{
+  "name": "Python Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12.1",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "github.copilot"
+      ]
+    }
+  },
+  "postCreateCommand": "python --version"
+}
