@@ -1,0 +1,8 @@
+json
+{
+  "python.defaultInterpreterPath": "C:\Users\AMLO7360\AppData\Local\Programs\Python\Python314\python.exe",
+  "python.terminal.activateEnvironment": false
+  "terminal.integrated.env.windows": {
+    "PY_PYTHON": "3.14"
+  }
+}
