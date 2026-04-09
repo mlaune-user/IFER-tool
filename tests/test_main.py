@@ -121,13 +121,13 @@ def test_resolve_cog_file_uses_previous_year_when_target_absent(
             return "<html></html>"
         return '<a href="/fr/statistiques/fichier/123456/cog_2024.csv">cog 2024</a>'
 
-    monkeypatch.setattr("ifer_tool.insee_module._search_page", fake_search_page)
-    monkeypatch.setattr("ifer_tool.insee_module._search_web_pages_for_insee", lambda query: [])
-    monkeypatch.setattr("ifer_tool.insee_module._extract_stat_file_links_from_info_page", lambda page_url: [])
-    monkeypatch.setattr("ifer_tool.insee_module._probe_fichier_endpoints", lambda product_ids: [])
-    monkeypatch.setattr("ifer_tool.insee_module._probe_known_cog_links", lambda target_year: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._search_page", fake_search_page)
+    monkeypatch.setattr("ifer_tool.insee_mod._search_web_pages_for_insee", lambda query: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_fichier_endpoints", lambda product_ids: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_known_cog_links", lambda target_year: [])
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -142,17 +142,20 @@ def test_resolve_cog_file_uses_previous_year_when_target_absent(
 def test_resolve_cog_file_uses_web_fallback_when_search_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("ifer_tool.insee_module._search_page", lambda query: "<html></html>")
+    monkeypatch.setattr("ifer_tool.insee_mod._search_page", lambda query: "<html></html>")
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_fichier_endpoints", lambda product_ids: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_known_cog_links", lambda target_year: [])
     monkeypatch.setattr(
-        "ifer_tool.insee_module._search_web_pages_for_insee",
+        "ifer_tool.insee_mod._search_web_pages_for_insee",
         lambda query: ["https://www.insee.fr/fr/statistiques/9999999"],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._fetch_page",
+        "ifer_tool.insee_mod._fetch_page",
         lambda url: '<a href="/fr/statistiques/fichier/8888888/cog_2025.csv">fichier</a>',
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -167,7 +170,7 @@ def test_resolve_uu2020_file_uses_secondary_query_when_first_is_empty(
 ) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr("ifer_tool.insee_module._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
 
     def fake_collect(query: str, max_result_pages: int = 8) -> list[str]:
         calls.append(query)
@@ -175,9 +178,9 @@ def test_resolve_uu2020_file_uses_secondary_query_when_first_is_empty(
             return []
         return ["https://www.insee.fr/fr/statistiques/fichier/7777777/uu2020_2025.csv"]
 
-    monkeypatch.setattr("ifer_tool.insee_module._collect_candidate_links", fake_collect)
+    monkeypatch.setattr("ifer_tool.insee_mod._collect_candidate_links", fake_collect)
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -192,14 +195,14 @@ def test_resolve_cog_file_prefers_direct_information_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "ifer_tool.insee_module._extract_stat_file_links_from_info_page",
+        "ifer_tool.insee_mod._extract_stat_file_links_from_info_page",
         lambda page_url: [
             "https://www.insee.fr/fr/statistiques/fichier/2521852/cog2024.xls",
             "https://www.insee.fr/fr/statistiques/fichier/2521852/cog2025.xls",
         ],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -213,14 +216,14 @@ def test_resolve_uu2020_file_prefers_direct_information_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "ifer_tool.insee_module._extract_stat_file_links_from_info_page",
+        "ifer_tool.insee_mod._extract_stat_file_links_from_info_page",
         lambda page_url: [
             "https://www.insee.fr/fr/statistiques/fichier/2531265/base_tu_2020_2025.csv",
             "https://www.insee.fr/fr/statistiques/fichier/2531266/base_td_2020_2024.csv",
         ],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -233,8 +236,8 @@ def test_resolve_uu2020_file_prefers_direct_information_page(
 def test_resolve_history_file_uses_local_fallback_when_no_links(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("ifer_tool.insee_module._probe_known_history_links", lambda target_year: [])
-    monkeypatch.setattr("ifer_tool.insee_module._collect_candidate_links", lambda query: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_known_history_links", lambda target_year: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._collect_candidate_links", lambda query: [])
 
     artifact = resolve_history_file(output_dir=tmp_path)
 
@@ -247,13 +250,13 @@ def test_resolve_history_file_prefers_known_history_links(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "ifer_tool.insee_module._probe_known_history_links",
+        "ifer_tool.insee_mod._probe_known_history_links",
         lambda target_year: [
             "https://www.insee.fr/fr/statistiques/fichier/8377162/v_mvt_commune_2025.csv"
         ],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -292,13 +295,13 @@ def test_prepare_tabular_file_extracts_csv_from_nested_zip(tmp_path: Path) -> No
 def test_resolve_cog_file_uses_fichier_endpoint_probe_when_info_page_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("ifer_tool.insee_module._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
     monkeypatch.setattr(
-        "ifer_tool.insee_module._probe_fichier_endpoints",
+        "ifer_tool.insee_mod._probe_fichier_endpoints",
         lambda product_ids: ["https://www.insee.fr/fr/statistiques/fichier/2560452/cog2024.xls"],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -311,14 +314,14 @@ def test_resolve_cog_file_uses_fichier_endpoint_probe_when_info_page_empty(
 def test_resolve_cog_file_uses_known_url_probe_when_other_paths_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("ifer_tool.insee_module._extract_stat_file_links_from_info_page", lambda page_url: [])
-    monkeypatch.setattr("ifer_tool.insee_module._probe_fichier_endpoints", lambda product_ids: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._probe_fichier_endpoints", lambda product_ids: [])
     monkeypatch.setattr(
-        "ifer_tool.insee_module._probe_known_cog_links",
+        "ifer_tool.insee_mod._probe_known_cog_links",
         lambda target_year: ["https://www.insee.fr/fr/statistiques/fichier/8377162/v_commune_2024.csv"],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -331,13 +334,13 @@ def test_resolve_cog_file_uses_known_url_probe_when_other_paths_empty(
 def test_resolve_uu2020_file_uses_fichier_endpoint_probe_when_info_page_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("ifer_tool.insee_module._extract_stat_file_links_from_info_page", lambda page_url: [])
+    monkeypatch.setattr("ifer_tool.insee_mod._extract_stat_file_links_from_info_page", lambda page_url: [])
     monkeypatch.setattr(
-        "ifer_tool.insee_module._probe_fichier_endpoints",
+        "ifer_tool.insee_mod._probe_fichier_endpoints",
         lambda product_ids: ["https://www.insee.fr/fr/statistiques/fichier/4802589/fonds_uu2020_2025.zip"],
     )
     monkeypatch.setattr(
-        "ifer_tool.insee_module._download_file",
+        "ifer_tool.insee_mod._download_file",
         lambda url, destination_dir: destination_dir / Path(url).name,
     )
 
@@ -373,9 +376,9 @@ def test_fetch_page_supports_gzip_encoded_payload(monkeypatch: pytest.MonkeyPatc
             return None
 
     payload = gzip.compress(b"<urlset><loc>https://www.insee.fr/fr/statistiques/123</loc></urlset>")
-    monkeypatch.setattr("ifer_tool.insee_module.urlopen", lambda request: FakeResponse(payload))
+    monkeypatch.setattr("ifer_tool.insee_mod.urlopen", lambda request: FakeResponse(payload))
 
-    from ifer_tool.insee_module import _fetch_page
+    from ifer_tool.insee_mod import _fetch_page
 
     text = _fetch_page("https://www.insee.fr/sitemap.xml.gz")
     assert "<loc>https://www.insee.fr/fr/statistiques/123</loc>" in text
@@ -388,11 +391,11 @@ def test_build_insee_duckdb_table_checks_expected_rows(
     fake_file.write_text("x\n1\n", encoding="utf-8")
 
     artifact = InseeArtifact(year=2025, url="https://example.test/file.csv", local_path=fake_file)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_cog_file", lambda output_dir, target_year: artifact)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_uu2020_file", lambda output_dir, target_year: artifact)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_history_file", lambda output_dir: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_cog_file", lambda output_dir, target_year: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_uu2020_file", lambda output_dir, target_year: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_history_file", lambda output_dir: artifact)
     monkeypatch.setattr(
-        "ifer_tool.insee_module._build_cog_tuu_tduu_table",
+        "ifer_tool.insee_mod._build_cog_tuu_tduu_table",
         lambda connection, cog_path, uu_path, history_path, target_year, metro_only: (
             "insee.cog_tuu_tduu_2025",
             10,
@@ -415,11 +418,11 @@ def test_build_insee_duckdb_table_accepts_expected_tolerance(
     fake_file.write_text("x\n1\n", encoding="utf-8")
 
     artifact = InseeArtifact(year=2025, url="https://example.test/file.csv", local_path=fake_file)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_cog_file", lambda output_dir, target_year: artifact)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_uu2020_file", lambda output_dir, target_year: artifact)
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_history_file", lambda output_dir: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_cog_file", lambda output_dir, target_year: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_uu2020_file", lambda output_dir, target_year: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_history_file", lambda output_dir: artifact)
     monkeypatch.setattr(
-        "ifer_tool.insee_module._build_cog_tuu_tduu_table",
+        "ifer_tool.insee_mod._build_cog_tuu_tduu_table",
         lambda connection, cog_path, uu_path, history_path, target_year, metro_only: (
             "insee.cog_tuu_tduu_2025",
             39074,
@@ -450,14 +453,14 @@ def test_build_insee_duckdb_table_normalizes_download_dir_to_insee(
         observed_dirs.append(output_dir)
         return artifact
 
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_cog_file", fake_resolve_cog)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_cog_file", fake_resolve_cog)
     monkeypatch.setattr(
-        "ifer_tool.insee_module.resolve_uu2020_file",
+        "ifer_tool.insee_mod.resolve_uu2020_file",
         lambda output_dir, target_year: artifact,
     )
-    monkeypatch.setattr("ifer_tool.insee_module.resolve_history_file", lambda output_dir: artifact)
+    monkeypatch.setattr("ifer_tool.insee_mod.resolve_history_file", lambda output_dir: artifact)
     monkeypatch.setattr(
-        "ifer_tool.insee_module._build_cog_tuu_tduu_table",
+        "ifer_tool.insee_mod._build_cog_tuu_tduu_table",
         lambda connection, cog_path, uu_path, history_path, target_year, metro_only: (
             "insee.cog_tuu_tduu_2025",
             1,
